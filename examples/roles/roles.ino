@@ -5,6 +5,8 @@
 #include "roo_display/driver/ili9341.h"
 #include "roo_display/driver/touch_xpt2046.h"
 #include "roo_onewire.h"
+#include "roo_scheduler.h"
+#include "roo_time.h"
 #include "roo_windows.h"
 #include "roo_windows/composites/menu/basic_navigation_item.h"
 #include "roo_windows/composites/menu/menu.h"
@@ -13,7 +15,9 @@
 
 using namespace roo_display;
 using namespace roo_onewire;
+using namespace roo_scheduler;
 using namespace roo_windows;
+using namespace roo_time;
 
 // Set your configuration for the driver.
 static constexpr int kCsPin = 5;
@@ -43,8 +47,12 @@ enum Role { KITCHEN, BEDROOM };
 std::vector<ThermometerRoles::Spec> roles = {{KITCHEN, "Kitchen"},
                                              {BEDROOM, "Bedroom"}};
 
-ThermometerRoles thermometers(onewire, roles);
-roo_windows_onewire::Configurator onewire_setup(env, thermometers);
+ThermometerRoles thermometer_roles(onewire, roles);
+
+auto& kitchen = thermometer_roles.thermometer_role(0);
+auto& bedroom = thermometer_roles.thermometer_role(1);
+
+roo_windows_onewire::Configurator onewire_setup(env, thermometer_roles);
 
 class SettingsMenu : public menu::Menu {
  public:
@@ -77,10 +85,24 @@ class MainPane : public AlignedLayout {
 MainPane pane(env);
 SingletonActivity activity(app, pane);
 
+// Fetch temperatures every second.
+RepetitiveTask converter(scheduler, []() { onewire.update(); }, Seconds(1));
+
+// Report temperatures every 5 seconds.
+RepetitiveTask reporter(
+    scheduler,
+    []() {
+      LOG(INFO) << kitchen;
+      LOG(INFO) << bedroom;
+    },
+    Seconds(5));
+
 void setup() {
   SPI.begin();
 
   display.init();
+  converter.startInstantly();
+  reporter.start();
 }
 
 void loop() {
